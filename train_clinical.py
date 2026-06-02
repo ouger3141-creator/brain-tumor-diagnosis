@@ -25,11 +25,7 @@ X = df.drop(columns=['SUBTYPE'])
 y = df['SUBTYPE']
 
 # 3. 과적합 및 행정용 변수 대거 제거 (R 코드와 100% 일치)
-target_leakage_cols = [
-    "PATIENT_ID", "OTHER_PATIENT_ID", "SAMPLE_ID", "FORM_COMPLETION_DATE",
-    "CANCER_TYPE", "CANCER_TYPE_DETAILED", "CANCER_TYPE_ACRONYM", "ONCOTREE_CODE",
-    "TISSUE_SOURCE_SITE", "TISSUE_SOURCE_SITE_CODE", "ICD_10", "ICD_O_3_SITE", "ICD_O_3_HISTOLOGY"
-]
+target_leakage_cols = ["TUMOR_TYPE", "CANCER_TYPE_DETAILED", "ONCOTREE_CODE", "ICD_O_3_HISTOLOGY", "OS_STATUS", "OS_MONTHS", "DSS_STATUS", "DSS_MONTHS", "DFS_STATUS", "DFS_MONTHS", "PFS_STATUS", "PFS_MONTHS", "DAYS_LAST_FOLLOWUP", "NEW_TUMOR_EVENT_AFTER_INITIAL_TREATMENT", "PERSON_NEOPLASM_CANCER_STATUS", "PATIENT_ID", "OTHER_PATIENT_ID", "SAMPLE_ID", "FORM_COMPLETION_DATE", "TISSUE_SOURCE_SITE_CODE"]
 X = X.drop(columns=[col for col in target_leakage_cols if col in X.columns])
 
 # 4. 결측치 비율이 30%를 초과하는 열 제거
@@ -64,7 +60,7 @@ full_processor = Pipeline(steps=[
 # 6. 학습 및 테스트 데이터 분할 (7:3, R 코드 시드 123 고정 반영)
 X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=123, stratify=y)
 
-print("⚙️ 최신 라이브러리 버전으로 모델 학습을 시작합니다...")
+print("⚙️ 최신 라이브러리 버전으로 모델 학습을 시작합니다…")
 
 # 7. 최적화 모델 학습 및 파이프라인 결합
 # (1) Random Forest (ntree=500 반영)
