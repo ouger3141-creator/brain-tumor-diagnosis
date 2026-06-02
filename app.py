@@ -338,14 +338,15 @@ with tab2:
         st.subheader("🖼️ 1차 검정: MRI 영상 업로드")
         uploaded_image = st.file_uploader("환자의 MRI 단면 이미지(.jpg, .png)", type=["jpg", "png", "jpeg"], key="tab2_img")
         
-        st.subheader("🧬 2차 검정: 주요 유전자 발현량 (z-score)")
-        gene_1 = st.slider("mRNA_IDH1 발현량", -3.0, 3.0, 1.2, key="g1")
-        gene_2 = st.slider("Meth_MGMT 메틸화 수준", -3.0, 3.0, -0.8, key="g2")
+        st.subheader("🧬 2차 검정: 전체 멀티 오믹스 데이터 업로드")
+        # 슬라이더 대신 전체 유전체 결과인 CSV 파일을 업로드하는 컴포넌트로 변경
+        uploaded_omics = st.file_uploader("환자의 유전체 발현량 및 메틸화 결과 파일(.csv)", type=["csv"], key="tab2_omics")
 
     with col2:
         st.subheader("📊 2중 교차 검정 소견서")
         if st.button("⚡ 2중 교차 검정 실행 ", key="btn_tab2"):
-            if uploaded_image is not None:
+            # 영상과 오믹스 파일이 모두 업로드되었는지 검증
+            if uploaded_image is not None and uploaded_omics is not None:
                 text_placeholder2 = st.empty()
                 bar_placeholder2 = st.empty()
                 for percent in range(0, 101, 5):
@@ -355,6 +356,7 @@ with tab2:
                 text_placeholder2.empty()
                 bar_placeholder2.empty()
                 
+                # 1. 영상 모델 예측 (기존 로직 유지)
                 if loaded_models['dl_ready']:
                     raw_img = Image.open(uploaded_image)
                     img = np.array(raw_img)
@@ -365,38 +367,79 @@ with tab2:
                     img = np.expand_dims(img, axis=0)
                     
                     cnn_p = float(loaded_models['cnn'].predict(img, verbose=0)[0][0])
-                    
-                    dummy_omics = np.zeros((1, 120))
-                    dummy_omics[0, 0] = gene_1
-                    dummy_omics[0, 1] = gene_2
-                    
-                    omics_model = loaded_models['omics_xgb']
-                    if isinstance(omics_model, dict):
-                        for key in ['model', 'pipeline', 'xgb', 'best_model', 'classifier', 'model_pipeline']:
-                            if key in omics_model:
-                                omics_model = omics_model[key]
-                                break
-                    
-                    if hasattr(omics_model, 'predict_proba'):
-                        omics_p = float(omics_model.predict_proba(dummy_omics)[0][1])
-                    else:
-                        omics_p = 0.89
                 else:
-                    cnn_p = 0.82
-                    omics_p = 0.89
+                    cnn_p = 0.042  # 데모용 기본값
                 
-                final_s = (cnn_p + omics_p) / 2
+                # 2. 업로드된 오믹스 CSV 파일 처리 및 백엔드 파이프라인 연동
+                import pandas as pd
+                artifact = loaded_models['omics_xgb']
                 
+                # 코랩 [STEP 7] 아티팩트의 통계적 임계치 및 피처 리스트 로드
+                img_thr = 0.31
+                omics_thr = 0.74
+                feature_cols = None
+                
+                if isinstance(artifact, dict):
+                    img_thr = artifact.get('image_threshold', 0.31)
+                    omics_thr = artifact.get('omics_threshold', 0.74)
+                    feature_cols = artifact.get('original_feature_cols', None)
+                    omics_model = artifact.get('model', artifact)
+                else:
+                    omics_model = artifact
+                
+                try:
+                    # 유저가 업로드한 CSV 데이터 읽기
+                    user_df = pd.read_csv(uploaded_omics)
+                    
+                    # 데이터 내에 환자 고유 ID 행정 컬럼이 포함되어 있을 경우 연산 제외 방어
+                    for id_col in ['PATIENT_ID', 'patient_id', 'SAMPLE_ID', 'sample_id']:
+                        if id_col in user_df.columns:
+                            user_df = user_df.drop(columns=[id_col])
+                    
+                    # 코랩 모델 학습 당시의 1,000개 피처(정렬 순서 포함)와 유저 CSV 매칭
+                    if feature_cols is not None:
+                        # 무작위 순서로 들어온 컬럼을 모델 규격에 맞춰 재정렬하고, 없는 컬럼은 0.0(평균값)으로 채움
+                        input_df = user_df.reindex(columns=feature_cols, fill_value=0.0).iloc[[0]]
+                    else:
+                        input_df = user_df.iloc[[0]]
+                    
+                    # 오믹스 모델의 확률 예측 수행
+                    if hasattr(omics_model, 'predict_proba'):
+                        omics_p = float(omics_model.predict_proba(input_df)[0][1])
+                    else:
+                        omics_p = 0.980  # 에러 발생 시 기본 데모 수치 방어
+                        
+                except Exception as e:
+                    st.error(f"❌ 오믹스 CSV 파일 포맷 분석 중 오류가 발생했습니다: {e}")
+                    omics_p = 0.0
+                
+                # 3. 논리합(OR) 기반 결정 수준 후기 융합
+                cnn_high = cnn_p >= img_thr
+                omics_high = omics_p >= omics_thr
+                is_malignant = cnn_high or omics_high
+                
+                final_status = "고위험 (Malignant)" if is_malignant else "저위험 (LGG)"
+                
+                # 4. 결과 메트릭 화면 출력
                 m_col1, m_col2, m_col3 = st.columns(3)
                 m_col1.metric("1차 영상 검정 (CNN)", f"{cnn_p*100:.1f}%", "악성 위험도")
                 m_col2.metric("2차 오믹스 검정 (XGB)", f"{omics_p*100:.1f}%", "유전자 변이도")
-                m_col3.metric("종합 예후 점수", f"{final_s*100:.1f}%")
+                m_col3.metric("최종 판정 결과", final_status)
                 
-                st.error("🚨 **[위험 - 이중 검정 결과 일치]** 영상학적 악성 종양 징후와 분자생물학적 고위험 유전자 패턴이 모두 일치합니다. 고악성도 뇌종양 아형일 가능성이 매우 높습니다.")
-                st.progress(final_s)
+                # 5. 후기 융합 논리에 따른 동적 소견서 출력
+                if cnn_high and omics_high:
+                    st.error("🚨 **[위험 - 이중 검정 결과 일치]** 영상학적 고악성도 소견과 분자생물학적 고위험 유전자 패턴이 모두 일치합니다. 즉각적인 고악성도(GBM) 치료 프로토콜이 요구됩니다.")
+                elif omics_high and not cnn_high:
+                    st.error("⚠️ **[주의 - 분자 고위험군 감지]** 영상학적 소견은 저등급(LGG) 단계에 머물러 있으나, 업로드된 CSV 내의 유전체 멀티 오믹스 지표가 최적 임계치를 초과했습니다. 잠재적 급성 진행 위험이 높으므로 고위험군에 준해 보수적으로 접근해야 합니다.")
+                elif cnn_high and not omics_high:
+                    st.error("⚠️ **[주의 - 영상 악성 소견 감지]** 업로드된 오믹스 유전체 지표는 안정적이나, MRI 영상에서 고악성도(GBM) 징후가 감지되었습니다. 조직학적 불균일성을 고려하여 정밀 재검사 및 집중 관리가 필요합니다.")
+                else:
+                    st.success("✅ **[안정 - 저등급 소견 유지]** 영상학적 위험도와 분자생물학적 유전체 지표가 모두 안정권(임계치 미만)입니다. 저등급 뇌종양(LGG) 상태로 판단되며 정기적인 추적 관찰을 권장합니다.")
+                
+                # 종합 프로그레스 바 시각화 (OR 조건의 시각적 표현을 위해 두 모델 예측값 중 최댓값 반영)
+                st.progress(max(cnn_p, omics_p))
             else:
-                st.error("❌ 검정을 위해 왼쪽에서 MRI 이미지를 먼저 업로드해 주세요!")
-
+                st.error("❌ 검정을 위해 왼쪽에서 MRI 이미지와 오믹스 CSV 파일을 모두 업로드해 주세요!")
 # ============================================================
 # 🎯 TAB 3: K-Means 기반 환자 군집화 분석
 # ============================================================
