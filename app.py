@@ -339,13 +339,11 @@ with tab2:
         uploaded_image = st.file_uploader("환자의 MRI 단면 이미지(.jpg, .png)", type=["jpg", "png", "jpeg"], key="tab2_img")
         
         st.subheader("🧬 2차 검정: 전체 멀티 오믹스 데이터 업로드")
-        # 슬라이더 대신 전체 유전체 결과인 CSV 파일을 업로드하는 컴포넌트로 변경
         uploaded_omics = st.file_uploader("환자의 유전체 발현량 및 메틸화 결과 파일(.csv)", type=["csv"], key="tab2_omics")
 
     with col2:
         st.subheader("📊 2중 교차 검정 소견서")
         if st.button("⚡ 2중 교차 검정 실행 ", key="btn_tab2"):
-            # 영상과 오믹스 파일이 모두 업로드되었는지 검증
             if uploaded_image is not None and uploaded_omics is not None:
                 text_placeholder2 = st.empty()
                 bar_placeholder2 = st.empty()
@@ -356,7 +354,7 @@ with tab2:
                 text_placeholder2.empty()
                 bar_placeholder2.empty()
                 
-                # 1. 영상 모델 예측 (기존 로직 유지)
+                # 1. 영상 모델 예측
                 if loaded_models['dl_ready']:
                     raw_img = Image.open(uploaded_image)
                     img = np.array(raw_img)
@@ -368,46 +366,47 @@ with tab2:
                     
                     cnn_p = float(loaded_models['cnn'].predict(img, verbose=0)[0][0])
                 else:
-                    cnn_p = 0.042  # 데모용 기본값
+                    cnn_p = 0.042
                 
-                # 2. 업로드된 오믹스 CSV 파일 처리 및 백엔드 파이프라인 연동
+                # 2. 오믹스 CSV 파일 처리 및 백엔드 넘파이 변환 고도화
                 import pandas as pd
+                import numpy as np
                 artifact = loaded_models['omics_xgb']
                 
-                # 코랩 [STEP 7] 아티팩트의 통계적 임계치 및 피처 리스트 로드
                 img_thr = 0.31
                 omics_thr = 0.74
-                feature_cols = None
+                selected_features = None
                 
                 if isinstance(artifact, dict):
                     img_thr = artifact.get('image_threshold', 0.31)
                     omics_thr = artifact.get('omics_threshold', 0.74)
-                    feature_cols = artifact.get('original_feature_cols', None)
+                    # 모델이 최종 학습에 사용한 1,000개의 피처 리스트를 가져옵니다.
+                    selected_features = artifact.get('selected_feature_names', None)
                     omics_model = artifact.get('model', artifact)
                 else:
                     omics_model = artifact
                 
                 try:
-                    # 유저가 업로드한 CSV 데이터 읽기
                     user_df = pd.read_csv(uploaded_omics)
                     
-                    # 데이터 내에 환자 고유 ID 행정 컬럼이 포함되어 있을 경우 연산 제외 방어
                     for id_col in ['PATIENT_ID', 'patient_id', 'SAMPLE_ID', 'sample_id']:
                         if id_col in user_df.columns:
                             user_df = user_df.drop(columns=[id_col])
                     
-                    # 코랩 모델 학습 당시의 1,000개 피처(정렬 순서 포함)와 유저 CSV 매칭
-                    if feature_cols is not None:
-                        # 무작위 순서로 들어온 컬럼을 모델 규격에 맞춰 재정렬하고, 없는 컬럼은 0.0(평균값)으로 채움
-                        input_df = user_df.reindex(columns=feature_cols, fill_value=0.0).iloc[[0]]
+                    # 아티팩트의 1,000개 유전자 기준과 순서에 맞게 재배치
+                    if selected_features is not None:
+                        input_df = user_df.reindex(columns=selected_features, fill_value=0.0).iloc[[0]]
                     else:
                         input_df = user_df.iloc[[0]]
                     
-                    # 오믹스 모델의 확률 예측 수행
+                    # 💡 핵심 수정 사항: DataFrame을 NumPy 배열로 변환하여 'dtype' 속성 에러 방어
+                    input_data = input_df.to_numpy()
+                    
                     if hasattr(omics_model, 'predict_proba'):
-                        omics_p = float(omics_model.predict_proba(input_df)[0][1])
+                        # 변환된 넘파이 배열 데이터를 입력으로 전달
+                        omics_p = float(omics_model.predict_proba(input_data)[0][1])
                     else:
-                        omics_p = 0.980  # 에러 발생 시 기본 데모 수치 방어
+                        omics_p = 0.980
                         
                 except Exception as e:
                     st.error(f"❌ 오믹스 CSV 파일 포맷 분석 중 오류가 발생했습니다: {e}")
@@ -436,7 +435,6 @@ with tab2:
                 else:
                     st.success("✅ **[안정 - 저등급 소견 유지]** 영상학적 위험도와 분자생물학적 유전체 지표가 모두 안정권(임계치 미만)입니다. 저등급 뇌종양(LGG) 상태로 판단되며 정기적인 추적 관찰을 권장합니다.")
                 
-                # 종합 프로그레스 바 시각화 (OR 조건의 시각적 표현을 위해 두 모델 예측값 중 최댓값 반영)
                 st.progress(max(cnn_p, omics_p))
             else:
                 st.error("❌ 검정을 위해 왼쪽에서 MRI 이미지와 오믹스 CSV 파일을 모두 업로드해 주세요!")
