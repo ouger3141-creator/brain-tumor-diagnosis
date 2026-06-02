@@ -368,7 +368,7 @@ with tab2:
                 else:
                     cnn_p = 0.042
                 
-                # 2. 오믹스 CSV 파일 처리 및 백엔드 넘파이 변환 고도화
+                # 2. 오믹스 CSV 파일 처리 및 다중 키 완벽 추적 예외 방어
                 import pandas as pd
                 import numpy as np
                 artifact = loaded_models['omics_xgb']
@@ -380,9 +380,16 @@ with tab2:
                 if isinstance(artifact, dict):
                     img_thr = artifact.get('image_threshold', 0.31)
                     omics_thr = artifact.get('omics_threshold', 0.74)
-                    # 모델이 최종 학습에 사용한 1,000개의 피처 리스트를 가져옵니다.
                     selected_features = artifact.get('selected_feature_names', None)
-                    omics_model = artifact.get('model', artifact)
+                    
+                    # 딕셔너리 내부의 모든 가능성 있는 인공지능 키들을 자동 순회하여 모델 추출
+                    omics_model = None
+                    for key in ['model', 'pipeline', 'xgb', 'classifier', 'best_model', 'model_pipeline']:
+                        if key in artifact:
+                            omics_model = artifact[key]
+                            break
+                    if omics_model is None:
+                        omics_model = artifact
                 else:
                     omics_model = artifact
                 
@@ -393,23 +400,30 @@ with tab2:
                         if id_col in user_df.columns:
                             user_df = user_df.drop(columns=[id_col])
                     
-                    # 아티팩트의 1,000개 유전자 기준과 순서에 맞게 재배치
                     if selected_features is not None:
                         input_df = user_df.reindex(columns=selected_features, fill_value=0.0).iloc[[0]]
                     else:
                         input_df = user_df.iloc[[0]]
                     
-                    # 💡 핵심 수정 사항: DataFrame을 NumPy 배열로 변환하여 'dtype' 속성 에러 방어
                     input_data = input_df.to_numpy()
                     
+                    # 가짜 고정값 수치를 완전히 제거하고 실제 인공지능 함수를 호출하여 정확한 연산 수행
                     if hasattr(omics_model, 'predict_proba'):
-                        # 변환된 넘파이 배열 데이터를 입력으로 전달
-                        omics_p = float(omics_model.predict_proba(input_data)[0][1])
+                        prob_result = omics_model.predict_proba(input_data)[0]
+                        omics_p = float(prob_result[1]) if len(prob_result) > 1 else float(prob_result[0])
+                    elif hasattr(omics_model, 'predict'):
+                        pred_result = omics_model.predict(input_data)
+                        if isinstance(pred_result, np.ndarray) and pred_result.ndim > 0:
+                            val = pred_result[0]
+                            omics_p = float(val[1]) if isinstance(val, (np.ndarray, list)) and len(val) > 1 else float(val)
+                        else:
+                            omics_p = float(pred_result)
                     else:
-                        omics_p = 0.980
+                        st.warning("⚠️ 로드된 모델 객체에서 연산 함수를 호출할 수 없습니다. 아티팩트 내부 구조를 확인해 주세요.")
+                        omics_p = 0.0
                         
                 except Exception as e:
-                    st.error(f"❌ 오믹스 CSV 파일 포맷 분석 중 오류가 발생했습니다: {e}")
+                    st.error(f"❌ 오믹스 CSV 파일 분석 및 예측 중 오류가 발생했습니다: {e}")
                     omics_p = 0.0
                 
                 # 3. 논리합(OR) 기반 결정 수준 후기 융합
