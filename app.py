@@ -441,3 +441,4 @@ with tab3:
             "Cluster 3": ["대형 (악성)", "G-CIMP 고위험군", "낮음 (21%)"]
         })
         st.dataframe(cluster_summary.set_index("특성 변수"), use_container_width=True)
+        st.markdown("<p style='text-align: center;'><a href='https://github.com/너의_깃허브_아이디/저장소_이름' target='_blank' style='color: #C5A059; text-decoration: none; font-weight: 600;'>🏛️ GitHub에서 프로젝트 소스코드 보기</a></p>", unsafe_allow_html=True)
