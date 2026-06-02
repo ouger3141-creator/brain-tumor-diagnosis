@@ -252,7 +252,7 @@ clinical_df = load_clinical_csv()
 # ============================================================
 st.markdown("<h1><span class='gold-title'>BRAIN TUMOR</span><span class='black-title'>뇌종양 다중 모달 통합 진단 플랫폼 (11조)</span></h1>", unsafe_allow_html=True)
 
-st.markdown("<p style='text-align: center;'><a href='https://github.com/너의_깃허브_아이디/저장소_이름' target='_blank' style='color: #C5A059; text-decoration: none; font-weight: 600;'>🏛️ GitHub에서 프로젝트 소스코드 보기</a></p>", unsafe_allow_html=True)
+st.markdown("<p style='text-align: center;'><a href='https://github.com/ouger3141-creator/brain-tumor-diagnosis' target='_blank' style='color: #C5A059; text-decoration: none; font-weight: 600;'> GitHub에서 프로젝트 소스코드 보기</a></p>", unsafe_allow_html=True)
 
 tab1, tab2, tab3 = st.tabs([
     "📊 1. 임상 기반 아형 분류", 
