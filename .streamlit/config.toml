@@ -1,0 +1,15 @@
+[theme]
+# 오데마 피게 특유의 세련된 골드 포인트 컬러
+primaryColor = "#C5A059" 
+
+# 깊이감 있는 럭셔리 초콜릿 블랙 배경
+backgroundColor = "#0F0F0F" 
+
+# 카드나 컴포넌트가 들어갈 세련된 다크 차콜 배경
+secondaryBackgroundColor = "#1A1A1A" 
+
+# 본문 텍스트 (순백색 대신 살짝 부드러운 화이트)
+textColor = "#F5F5F5" 
+
+# 기본 폰트 설정
+font = "sans serif"
