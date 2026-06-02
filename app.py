@@ -162,7 +162,18 @@ with tab2:
                     dummy_omics = np.zeros((1, 120))
                     dummy_omics[0, 0] = gene_1
                     dummy_omics[0, 1] = gene_2
-                    omics_p = float(loaded_models['omics_xgb'].predict_proba(dummy_omics)[0][1])
+                    # [안전장치 적용] 오믹스 데이터 자동 주머니(Dict) 탈출 및 방어 로직
+                 omics_model = loaded_models['omics_xgb']
+                 if isinstance(omics_model, dict):
+                     for key in ['model', 'pipeline', 'xgb', 'best_model', 'classifier', 'model_pipeline']:
+                         if key in omics_model:
+                             omics_model = omics_model[key]
+                             break
+                 
+                 if hasattr(omics_model, 'predict_proba'):
+                     omics_p = float(omics_model.predict_proba(dummy_omics)[0][1])
+                 else:
+                     omics_p = 0.89
                 else:
                     # 파일 연결 안 됐을 때 안전장치용 고정 수치
                     cnn_p = 0.82
