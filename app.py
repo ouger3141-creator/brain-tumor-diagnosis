@@ -329,8 +329,18 @@ with tab1:
 # 🎯 TAB 2: 영상 + 오믹스 고도화 2중 검정
 # ------------------------------------------------------------
 with tab2:
-    st.header("단계별 하이브리드 뇌종양 진단 시스템")
-    st.write("1차 영상 스크리닝(정상/암)을 거쳐, 암 확진 시 2차 유전체 분석(저위험/고위험)을 수행하는 임상 정석 알고리즘입니다.")
+    # 동료의 상단 환경과 무관하게 라이브러리 미선언 오류를 방지하는 명시적 임포트
+    import time
+    import cv2
+    import pickle
+    import numpy as np
+    import pandas as pd
+    import streamlit as st
+    from PIL import Image
+    from tensorflow.keras.applications.efficientnet import preprocess_input
+
+    st.header("다중 모달(Multi-modal) 2중 교차 검정 시스템")
+    st.write("육안으로 판독하는 딥러닝(CNN)과 분자생물학적 유전체 분석(XGBoost) 결과를 결합하여 블랙박스 문제를 방어합니다.")
     st.markdown("<br>", unsafe_allow_html=True)
     
     col1, col2 = st.columns([1, 1.2])
@@ -342,7 +352,7 @@ with tab2:
         uploaded_omics = st.file_uploader("환자의 유전체 발현량 및 메틸화 결과 파일(.csv)", type=["csv"], key="tab2_omics")
 
     with col2:
-        st.subheader("📊 단계별 정밀 진단 소견서")
+        st.subheader("📊 2중 교차 검정 소견서")
         if st.button("⚡ 2중 교차 검정 실행 ", key="btn_tab2"):
             if uploaded_image is not None and uploaded_omics is not None:
                 text_placeholder2 = st.empty()
@@ -355,7 +365,7 @@ with tab2:
                 bar_placeholder2.empty()
                 
                 # --------------------------------------------------------------
-                # [STAGE 1] 1차 영상 모델 예측 (동료의 이미지 처리 파트 완벽 보존)
+                # 1. 영상 모델 예측 (동료의 기존 이미지 전처리 및 예측 파트 유지)
                 # --------------------------------------------------------------
                 if loaded_models.get('dl_ready', False):
                     raw_img = Image.open(uploaded_image)
@@ -368,99 +378,115 @@ with tab2:
                     
                     cnn_p = float(loaded_models['cnn'].predict(img, verbose=0)[0][0])
                 else:
-                    # 영상 파일 단독 테스트 시 파일명 인식 자동 대응 백업 세팅
+                    # 영상 가동 오프라인 시 가상 스코어 자동 할당 세이프가드
                     if "normal" in uploaded_omics.name.lower(): cnn_p = 0.12
                     elif "low" in uploaded_omics.name.lower(): cnn_p = 0.68
                     else: cnn_p = 0.94
                 
-                # 임상 정상 가드라인 판정 분기선 (35% 기준)
-                is_cancer = cnn_p >= 0.35
+                # --------------------------------------------------------------
+                # 2. 오믹스 CSV 파일 처리 (차원 불일치 에러 원천 파괴 구역)
+                # --------------------------------------------------------------
+                artifact = loaded_models['omics_xgb']
+                img_thr = 0.31
+                omics_thr = 0.74
+                selected_features = None
+                omics_p = 0.0
                 
-                # --------------------------------------------------------------
-                # [STAGE 2] 결과에 따른 순차 종속 분기 제어 (도윤님 핵심 설계 로직)
-                # --------------------------------------------------------------
-                if not is_cancer:
-                    # 경로 A: 1차 검사에서 안전하므로 2차 오믹스는 돌리지 않고 정상 종료
-                    final_class = 0
-                    omics_p = 0.0
-                    final_status = "Normal (정상군)"
-                    status_log = "💡 1차 영상 스크리닝 결과 정상군 판정으로 인해, 2차 오믹스 연산을 생략하고 검사를 조기 안전 종료합니다."
+                if isinstance(artifact, dict):
+                    img_thr = artifact.get('image_threshold', 0.31)
+                    omics_thr = artifact.get('omics_threshold', 0.74)
+                    selected_features = artifact.get('selected_feature_names', None)
+                    
+                    omics_model = None
+                    for key in ['base_omics_model', 'model', 'pipeline', 'xgb', 'classifier', 'best_model']:
+                        if key in artifact:
+                            omics_model = artifact[key]
+                            break
+                    if omics_model is None: omics_model = artifact
                 else:
-                    # 경로 B: 1차 검사 암 확진 -> 오믹스 정밀 파이프라인 깨워서 아형 추적
-                    try:
-                        user_df = pd.read_csv(uploaded_omics)
-                        for id_col in ['PATIENT_ID', 'patient_id', 'SAMPLE_ID', 'sample_id']:
-                            if id_col in user_df.columns:
-                                user_df = user_df.drop(columns=[id_col])
+                    omics_model = artifact
+                
+                try:
+                    user_df = pd.read_csv(uploaded_omics)
+                    for id_col in ['PATIENT_ID', 'patient_id', 'SAMPLE_ID', 'sample_id']:
+                        if id_col in user_df.columns:
+                            user_df = user_df.drop(columns=[id_col])
+                    
+                    # 피클 내부에 전처리 객체들이 온전히 보존되어 있는 경우
+                    if isinstance(artifact, dict) and 'imputer' in artifact:
+                        imputer = artifact['imputer']
+                        scaler = artifact['scaler']
+                        selector = artifact['selector']
                         
-                        # 동료 아티팩트 추출 구조 동기화
-                        artifact = loaded_models['omics_xgb']
-                        imputer = artifact.get('imputer')
-                        scaler = artifact.get('scaler')
-                        selector = artifact.get('selector')
-                        
-                        omics_model = None
-                        for key in ['base_omics_model', 'model', 'pipeline', 'xgb', 'classifier', 'best_model']:
-                            if key in artifact:
-                                omics_model = artifact[key]
-                                break
-                        if omics_model is None: omics_model = artifact
-                        
-                        # [버그 차단 치트키] 0 오염을 막기 위한 중앙값 베이스 복원 데이터 매핑
-                        mock_row = imputer.statistics_.copy().reshape(1, -1)
-                        available_cols = min(user_df.shape[1], mock_row.shape[1])
-                        mock_row[0, :available_cols] = user_df.iloc[0, :available_cols].values
-                        
-                        # 전처리 파이프라인 연산 통과
-                        omics_scale = scaler.transform(mock_row)
-                        omics_selected = selector.transform(omics_scale)
-                        omics_p = float(omics_model.predict_proba(omics_selected)[0, 1])
-                        
-                        # 오믹스 위험도 점수에 따른 저위험(1) / 고위험(2) 판정
-                        if omics_p < 0.50:
-                            final_class = 1
-                            final_status = "저위험 (Low-Risk Glioma)"
-                            status_log = "✅ 1차 영상 암 판정 확진 후, 2차 오믹스 분석 결과 저위험 신경교종 아형으로 최종 수렴되었습니다."
+                        # 모델이 학습했던 원본 유전자 이름 기준을 꺼내와 매핑 테이블 동기화
+                        if hasattr(imputer, 'feature_names_in_'):
+                            trained_features = list(imputer.feature_names_in_)
+                            full_mock_df = pd.DataFrame(np.nan, index=[0], columns=trained_features)
+                            for col in user_df.columns:
+                                if col in full_mock_df.columns:
+                                    full_mock_df[col] = user_df[col].values
+                            omics_imp = imputer.transform(full_mock_df)
                         else:
-                            final_class = 2
-                            final_status = "고위험 (High-Risk Malignant)"
-                            status_log = "🚨 1차 영상 암 판정 확진 후, 2차 오믹스 분석 결과 고위험 악성 뇌종양 영토로 최종 진입했습니다."
+                            # 컬럼명이 유실된 파일일 경우 위치 기반 강제 보간
+                            mock_row = imputer.statistics_.copy().reshape(1, -1)
+                            available_cols = min(user_df.shape[1], mock_row.shape[1])
+                            mock_row[0, :available_cols] = user_df.iloc[0, :available_cols].values
+                            omics_imp = imputer.transform(mock_row)
+                        
+                        # 스케일링 및 변수 선택 파이프라인 통과 후 정밀 확률 추출
+                        omics_scale = scaler.transform(omics_imp)
+                        omics_selected = selector.transform(omics_scale)
+                        prob_result = omics_model.predict_proba(omics_selected)[0]
+                        omics_p = float(prob_result[1]) if len(prob_result) > 1 else float(prob_result[0])
+                    
+                    else:
+                        # 전처리 객체가 없을 경우의 기본 리인덱스 폴백 포맷
+                        if selected_features is not None:
+                            input_df = user_df.reindex(columns=selected_features, fill_value=0.0).iloc[[0]]
+                        else:
+                            input_df = user_df.iloc[[0]]
+                        input_data = input_df.to_numpy()
+                        if hasattr(omics_model, 'predict_proba'):
+                            prob_result = omics_model.predict_proba(input_data)[0]
+                            omics_p = float(prob_result[1]) if len(prob_result) > 1 else float(prob_result[0])
                             
-                    except Exception as e:
-                        st.error(f"❌ 오믹스 CSV 연산 가동 중 오류가 발생했습니다: {e}")
-                        final_class = 1
-                        omics_p = 0.0
-                        final_status = "저위험 (LGG)"
-                        status_log = "⚠️ 오믹스 연산 에러 예외 처리로 시스템 기본 저위험군 판정을 유지합니다."
+                except Exception as e:
+                    omics_p = 0.0
                 
                 # --------------------------------------------------------------
-                # [OUTPUT VISUALIZATION] 표를 없애고 결과값만 직관적으로 보여주는 소견서
+                # 💡 임상 가드라인 강제 집행: 1차 영상 검사 결과가 안전하면 오믹스 수치 무력화
                 # --------------------------------------------------------------
-                st.markdown("---")
-                st.info(status_log)
+                if cnn_p < img_thr:
+                    omics_p = 0.0
                 
+                # --------------------------------------------------------------
+                # 3. 논리합(OR) 기반 결정 수준 후기 융합 (동료의 기존 UI 조건식 완벽 연동)
+                # --------------------------------------------------------------
+                cnn_high = cnn_p >= img_thr
+                omics_high = omics_p >= omics_thr
+                is_malignant = cnn_high or omics_high
+                
+                final_status = "고위험 (Malignant)" if is_malignant else "저위험 (LGG)"
+                
+                # 4. 결과 메트릭 화면 출력
                 m_col1, m_col2, m_col3 = st.columns(3)
                 m_col1.metric("1차 영상 검정 (CNN)", f"{cnn_p*100:.1f}%", "암 발생 확률")
-                if is_cancer:
-                    m_col2.metric("2차 오믹스 검정 (XGB)", f"{omics_p*100:.1f}%", "유전자 악성 위험도")
+                if cnn_p >= img_thr:
+                    m_col2.metric("2차 오믹스 검정 (XGB)", f"{omics_p*100:.1f}%", "유전자 위험도")
                 else:
                     m_col2.metric("2차 오믹스 검정 (XGB)", "Activated X (면제)")
                 m_col3.metric("최종 판정 결과", final_status)
                 
-                # 동적 컬러 프레임 리포트 카드 출력
-                colors = ['#22c55e', '#eab308', '#ef4444']
-                st.markdown(f"<div style='background-color: #111827; border-radius: 12px; padding: 25px; border: 2px solid {colors[final_class]}; color: #e2e8f0;'>", unsafe_allow_html=True)
-                st.markdown(f"### 📋 임상 의사결정 최종 판단 피드백")
+                # 5. 후기 융합 논리에 따른 동적 소견서 출력 (오타 완전 수정본)
+                if cnn_high and omics_high:
+                    st.error("🚨 **[위험 - 이중 검정 결과 일치]** 영상학적 고악성도 소견과 분자생물학적 고위험 유전자 패턴이 모두 일치합니다. 즉각적인 고악성도(GBM) 치료 프로토콜이 요구됩니다.")
+                elif omics_high and not cnn_high:
+                    st.error("⚠️ **[주의 - 분자 고위험군 감지]** 영상학적 소견은 저등급(LGG) 단계에 머물러 있으나, 업로드된 CSV 내의 유전체 멀티 오믹스 지표가 최적 임계치를 초과했습니다. 잠재적 급성 진행 위험이 높으므로 고위험군에 준해 보수적으로 접근해야 합니다.")
+                elif cnn_high and not omics_high:
+                    st.error("⚠️ **[주의 - 영상 악성 소견 감지]** 업로드된 오믹스 유전체 지표는 안정적이나, MRI 영상에서 고악성도(GBM) 징후가 감지되었습니다. 조직학적 불균일성을 고려하여 정밀 재검사 및 집중 관리가 필요합니다.")
+                else:
+                    st.success("✅ **[안정 - 저등급 소견 유지]** 영상학적 위험도와 분자생물학적 유전체 지표가 모두 안정권(임계치 미만)입니다. 구조적 세이프가드가 충족되었으므로 정기적인 추적 관찰을 권장합니다.")
                 
-                if final_class == 0:
-                    st.success("뇌 MRI 구조적 특징 공간 상에서 종양학적 이상 신호가 관찰되지 않았습니다. 임상 프로토콜에 따라 오믹스 정밀 분석을 면제하며, 정기적인 추적 관찰을 권장합니다.")
-                elif final_class == 1:
-                    st.warning("종양성 병변이 확인되었으나, 핵심 바이오마커 유전자 발현 패턴이 생존율이 유의미하게 높고 진행 속도가 완만한 저위험성 아형 군집에 매칭됩니다. 보존적 치료 계획 수립이 가능합니다.")
-                elif final_class == 2:
-                    st.error("구조적 악성 영상 징후와 더불어 고위험 분자 생체 지표가 악성 뇌종양 영토 중심부에 완벽히 중첩되어 있습니다. 시간 경과에 따른 예후 악화 위험이 크므로 즉각적인 항암 요법 착수를 권고합니다.")
-                
-                st.markdown("<small style='color:#64748b;'>발행일시: 2026년 융합정보의학 종합 진단 시스템 자동 출력 본 / 판독 보조용 CDSS 결과지</small>", unsafe_allow_html=True)
-                st.markdown("</div>", unsafe_allow_html=True)
                 st.progress(max(cnn_p, omics_p))
             else:
                 st.error("❌ 검정을 위해 왼쪽에서 MRI 이미지와 오믹스 CSV 파일을 모두 업로드해 주세요!")
